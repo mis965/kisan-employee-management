@@ -60,8 +60,9 @@ android {
         applicationId = appProperties.getProperty("app.package")
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = runNumber
+        versionName = "1.$runNumber"
 
         buildConfigField("String", "HOME_URL", "\"${appProperties.getProperty("app.url")}\"")
         resValue("string", "app_name", appProperties.getProperty("app.name"))
