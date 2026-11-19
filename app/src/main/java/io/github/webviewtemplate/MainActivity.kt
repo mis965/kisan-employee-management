@@ -47,6 +47,11 @@ import androidx.core.graphics.toColorInt
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import android.os.Handler
 import android.os.Looper
+import android.content.Context
+import android.location.LocationManager
+import android.provider.Settings
+import androidx.appcompat.app.AlertDialog
+import androidx.core.location.LocationManagerCompat
 
 @SuppressLint("IntentReset", "QueryPermissionsNeeded")
 class MainActivity : AppCompatActivity() {
@@ -82,13 +87,17 @@ class MainActivity : AppCompatActivity() {
     private var pendingWebPermissionRequest: PendingWebPermissionRequest? = null
     private var pendingGeoOrigin: String? = null
     private var pendingGeoCallback: GeolocationPermissions.Callback? = null
+    private var awaitingLocationSettings = false
+    private var locationDialog: AlertDialog? = null
     private val locationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-            val cb = pendingGeoCallback ?: return@registerForActivityResult
-            val origin = pendingGeoOrigin ?: return@registerForActivityResult
-            cb.invoke(origin, results.values.any { it }, false)
+            val granted = results.values.any { it }
+            val cb = pendingGeoCallback
+            val origin = pendingGeoOrigin
+            if (cb != null && origin != null) cb.invoke(origin, granted, false)
             pendingGeoCallback = null
             pendingGeoOrigin = null
+            if (granted) ensureLocationServicesOn() else showLocationDeniedDialog()
         }
     private val webPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -260,6 +269,7 @@ class MainActivity : AppCompatActivity() {
                         PackageManager.PERMISSION_GRANTED
                 if (hasLocation) {
                     callback.invoke(origin, true, false)
+                    runOnUiThread { ensureLocationServicesOn() }
                 } else {
                     pendingGeoCallback?.invoke(pendingGeoOrigin ?: origin, false, false)
                     pendingGeoOrigin = origin
@@ -356,6 +366,7 @@ class MainActivity : AppCompatActivity() {
         // A recreated activity may already have a request in flight; its result is redelivered.
         if (savedInstanceState == null) {
             requestLocalNetworkPermissionIfNeeded()
+            requestLocationUpFront()
         }
 
         onBackPressedDispatcher.addCallback(
@@ -372,7 +383,65 @@ class MainActivity : AppCompatActivity() {
             }
         )
     }
+    private fun hasLocationPermission() =
+        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
+    private fun requestLocationUpFront() {
+        if (hasLocationPermission()) {
+            ensureLocationServicesOn()
+        } else {
+            locationPermissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            )
+        }
+    }
+
+    private fun ensureLocationServicesOn() {
+        if (isFinishing || locationDialog?.isShowing == true) return
+        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        if (LocationManagerCompat.isLocationEnabled(lm)) return
+        locationDialog = AlertDialog.Builder(this)
+            .setTitle("Turn on Location")
+            .setMessage("Location is switched off on your phone. It is needed to punch in and out. Tap Turn on, then switch Location on.")
+            .setCancelable(false)
+            .setPositiveButton("Turn on") { _, _ ->
+                awaitingLocationSettings = true
+                startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
+    private fun showLocationDeniedDialog() {
+        if (isFinishing || locationDialog?.isShowing == true) return
+        if (shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) return
+        locationDialog = AlertDialog.Builder(this)
+            .setTitle("Allow Location")
+            .setMessage("Location permission is needed to punch in and out. Tap Open settings, then Permissions > Location > Allow.")
+            .setCancelable(false)
+            .setPositiveButton("Open settings") { _, _ ->
+                awaitingLocationSettings = true
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+                )
+            }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (awaitingLocationSettings) {
+            awaitingLocationSettings = false
+            val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            if (hasLocationPermission() && LocationManagerCompat.isLocationEnabled(lm)) {
+                webView.evaluateJavascript(
+                    "try{if(typeof PN!=='undefined'&&PN&&!PN.pos&&H.pnRetryLoc)H.pnRetryLoc();}catch(e){}", null
+                )
+            }
+        }
+    }
     override fun onDestroy() {
         pendingWebPermissionRequest?.request?.deny()
         pendingWebPermissionRequest = null
