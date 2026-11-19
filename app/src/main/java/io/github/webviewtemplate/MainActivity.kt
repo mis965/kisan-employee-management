@@ -52,6 +52,7 @@ import android.location.LocationManager
 import android.provider.Settings
 import androidx.appcompat.app.AlertDialog
 import androidx.core.location.LocationManagerCompat
+import androidx.core.content.pm.PackageInfoCompat
 
 @SuppressLint("IntentReset", "QueryPermissionsNeeded")
 class MainActivity : AppCompatActivity() {
@@ -639,6 +640,11 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun pageReady() { pageIsReady = true }
+
+        @JavascriptInterface
+        fun appBuild(): Int = try {
+            PackageInfoCompat.getLongVersionCode(packageManager.getPackageInfo(packageName, 0)).toInt()
+        } catch (e: Exception) { 0 }
 
             @JavascriptInterface
         fun saveFile(name: String, mime: String, b64: String) {
